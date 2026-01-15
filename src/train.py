@@ -85,7 +85,7 @@ def validate(model, val_loader, device, transient=200):
     }
 
 
-def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MSELoss(), use_wandb=False):
+def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MSELoss(), use_wandb=False, project_name="snn-regression"):
     # ============================================================================
     # Create output directory for checkpoints and logs
     # ============================================================================
@@ -104,7 +104,7 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         run_name = f"{CONFIG['block_type']}_transient_final_tau={CONFIG['final_tau']}_tau={CONFIG['tau']}_norm={CONFIG['norm_type']}_plif={CONFIG['Plif']}"
 
         wandb.init(
-            project=f"snn-{CONFIG['experiment']}-regression-PC",
+            project=project_name,
             name=run_name,
             config=CONFIG,
             dir=str(output_dir)  # Save wandb files in output_dir

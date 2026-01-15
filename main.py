@@ -63,9 +63,10 @@ def main():
 	# ============================================================================
 	# Weights & Biases logging
 	use_wandb = True
+	wandb_name = f"snn-{experiment}-regression-PC"
 
 	# Select architecture type
-	block_type = 'plain'  # Options: 'SEW', 'plain', 'spiking'
+	block_type = 'SEW'  # Options: 'SEW', 'plain', 'spiking'
  
 	monitor_mode = "none"  # Options: "none", "spikes", "norm", "both"
 	
@@ -201,7 +202,7 @@ def main():
 		print("TRAINING MODE")
 		print("="*70)
 		output_dir.mkdir(parents=True, exist_ok=True)
-		train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MSELoss(), use_wandb=use_wandb)
+		train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MSELoss(), use_wandb=use_wandb, project_name=wandb_name)
 
 		print(f"\nModel trained successfully.")
 
