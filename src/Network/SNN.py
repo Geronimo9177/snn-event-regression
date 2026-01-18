@@ -30,7 +30,7 @@ class SNN_Net(nn.Module):
         For temporal sequences, call forward() for each timestep T.
         Remember to reset neuron states between sequences with functional.reset_net(model).
     """
-    def __init__(self, tau=2.0, final_tau=20.0, layer_list=None, hidden=256, 
+    def __init__(self, tau=2.0, final_tau=20.0, layer_list=None, hidden=256, v_reset=0.0,
                  surrogate_function=surrogate.ATan(), connect_f="ADD", Plif=False, 
                  norm_type="BN", learnable_norm=True, init_scale=5.0):
         super().__init__()
@@ -58,8 +58,8 @@ class SNN_Net(nn.Module):
 
                 # Add LIF after channel adjustment
                 conv_blocks.append(
-                    neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True)
-                    if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+                    neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
+                    if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
                 )
                 in_channels = channels
 
@@ -67,19 +67,19 @@ class SNN_Net(nn.Module):
             for _ in range(cfg["num_blocks"]):
                 if cfg["block_type"] == "sew":
                     conv_blocks.append(
-                        SEWBlock(in_channels, mid_channels, tau=tau, Plif=Plif,
+                        SEWBlock(in_channels, mid_channels, tau=tau, Plif=Plif, v_reset=v_reset,
                                 stride1=cfg["stride_1"], stride2=cfg["stride_2"], connect_f=connect_f,  
                                 norm_type=norm_type, learnable_norm=learnable_norm, init_scale=init_scale)
                     )
                 elif cfg["block_type"] == "plain":
                     conv_blocks.append(
-                        PlainBlock(in_channels, mid_channels, tau=tau, Plif=Plif, 
+                        PlainBlock(in_channels, mid_channels, tau=tau, Plif=Plif, v_reset=v_reset,
                                   stride1=cfg["stride_1"], stride2=cfg["stride_2"],
                                   norm_type=norm_type, learnable_norm=learnable_norm, init_scale=init_scale)
                     )
                 elif cfg["block_type"] == "spiking":
                     conv_blocks.append(
-                        SpikingBlock(in_channels, mid_channels, tau=tau, Plif=Plif,
+                        SpikingBlock(in_channels, mid_channels, tau=tau, Plif=Plif, v_reset=v_reset,
                                     stride1=cfg["stride_1"], stride2=cfg["stride_2"],
                                     norm_type=norm_type, learnable_norm=learnable_norm, init_scale=init_scale)
                     )
@@ -110,8 +110,8 @@ class SNN_Net(nn.Module):
         self.fc1 = nn.Linear(flat_dim, hidden, bias=False)
         
         # Hidden LIF neurons
-        self.lif_hidden = (neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True) 
-                          if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True))
+        self.lif_hidden = (neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True) 
+                          if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True))
         
         # Output layer
         self.fc_out = nn.Linear(hidden, 1, bias=False)

@@ -67,14 +67,11 @@ def main():
 
 	# Select architecture type
 	block_type = 'SEW'  # Options: 'SEW', 'plain', 'spiking'
- 
-	monitor_mode = "none"  # Options: "none", "spikes", "norm", "both"
-	
-	K = 10           # TBPTT truncation window (backprop every K timesteps)
-	transient = 200  # Initial timesteps to skip (warmup for recurrent states)
 
-	num_epochs = 20  # Total training epochs
 	hidden = 256     # Hidden layer size
+
+	# Neuron reset type
+	reset_type = 'hard'  # options: 'hard' or 'soft' reset for LIF neurons
 
 	surrogate_function = surrogate.ATan()  # Gradient surrogate (arctan)
 	Plif = False                          # Use standard LIF (not parametric)
@@ -85,7 +82,14 @@ def main():
 	learnable_norm = True   # Whether normalization parameters are learnable
 	init_scale = 5.0        # Initial scale for Multiplication layers
 
+	K = 10           # TBPTT truncation window (backprop every K timesteps)
+	transient = 200  # Initial timesteps to skip (warmup for recurrent states)
+
+	num_epochs = 20  # Total training epochs
+
 	early_stop_patience = 10  # Stop if no improvement for this many epochs
+
+	monitor_mode = "none"  # Options: "none", "spikes", "norm", "both"
 
 	# ============================================================================
 	# Event reading and preprocessing
@@ -138,11 +142,17 @@ def main():
 	elif block_type.lower() == 'spiking':
 		layer_list = layer_list_spiking
 
+	if reset_type == 'hard':
+		v_reset = 0.0
+	elif reset_type == 'soft':
+		v_reset = None
+
 	model = SNN_Net(
 		tau=tau, 
 		final_tau=final_tau,
 		layer_list=layer_list, 
 		hidden=hidden, 
+		v_reset=v_reset,
 		surrogate_function=surrogate_function,
 		connect_f="ADD",  # Connection function for SEW blocks
 		Plif=Plif, 

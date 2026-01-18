@@ -36,7 +36,7 @@ class PlainBlock(nn.Module):
     Architecture:
         Conv3x3 → Norm → LIF → Conv3x3 → Norm → LIF
     """
-    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False,
+    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False, v_reset=0.0,
                  surrogate_function=surrogate.ATan(), stride1=1, stride2=1,
                  norm_type="BN", learnable_norm=True, init_scale=5.0):
         super(PlainBlock, self).__init__()
@@ -44,13 +44,13 @@ class PlainBlock(nn.Module):
         self.conv = nn.Sequential(
             # First conv-norm-LIF
             conv3x3(in_channels, mid_channels, stride=stride1, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale),
-            neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True)
-            if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True),
+            neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
+            if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True),
 
             # Second conv-norm-LIF
             conv3x3(mid_channels, in_channels, stride=stride2, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale),
-            neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True)
-            if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+            neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
+            if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
         )
 
     def forward(self, x: torch.Tensor):
@@ -68,7 +68,7 @@ class SpikingBlock(nn.Module):
         x → Conv3x3 → Norm → LIF → Conv3x3 → Norm → (+) → LIF → out
         └──────────────── downsample ────────────────┘
     """
-    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False,
+    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False, v_reset=0.0,
                  surrogate_function=surrogate.ATan(), stride1=1, stride2=1,
                  norm_type="BN", learnable_norm=True, init_scale=5.0):
         super(SpikingBlock, self).__init__()
@@ -76,16 +76,16 @@ class SpikingBlock(nn.Module):
         # Main path
         self.conv = nn.Sequential(
             conv3x3(in_channels, mid_channels, stride=stride1, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale),
-            neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True)
-            if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True),
+            neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
+            if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True),
 
             nn.Conv2d(mid_channels, in_channels, kernel_size=3, padding=1, stride=stride2, bias=False),
             get_norm_layer(norm_type=norm_type, num_features=in_channels, learnable=learnable_norm, init_scale=init_scale)
         )
 
         # Output LIF (after addition)
-        self.sn = neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True) \
-                  if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+        self.sn = neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True) \
+                  if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
 
         # Shortcut connection (downsample if needed)
         if stride1 == 2:
@@ -109,7 +109,7 @@ class SEWBlock(nn.Module):
         x → Conv3x3 → Norm → LIF → Conv3x3 → Norm → LIF → (+) → out
         └──────────────── downsample → LIF ────────────────┘
     """
-    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False,
+    def __init__(self, in_channels, mid_channels, tau=2.0, Plif=False, v_reset=0.0,
                  surrogate_function=surrogate.ATan(), stride1=1, stride2=1,
                  connect_f="ADD", norm_type="BN", learnable_norm=True, init_scale=5.0):
         super().__init__()
@@ -118,20 +118,20 @@ class SEWBlock(nn.Module):
 
         # First conv-norm-LIF
         self.conv1 = conv3x3(in_channels, mid_channels, stride=stride1, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale)
-        self.lif1 = neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True) \
-                    if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+        self.lif1 = neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True) \
+                    if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
 
         # Second conv-norm-LIF
         self.conv2 = conv3x3(mid_channels, in_channels, stride=stride2, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale)
-        self.lif2 = neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True) \
-                    if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+        self.lif2 = neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True) \
+                    if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
 
         # Shortcut (with LIF)
         if stride1 == 2:
             self.downsample = nn.Sequential(
                 conv1x1(in_channels, in_channels, stride=2, norm_type=norm_type, learnable=learnable_norm, init_scale=init_scale),
-                neuron.ParametricLIFNode(init_tau=tau, surrogate_function=surrogate_function, detach_reset=True)
-                if Plif else neuron.LIFNode(tau=tau, surrogate_function=surrogate_function, detach_reset=True)
+                neuron.ParametricLIFNode(init_tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
+                if Plif else neuron.LIFNode(tau=tau, v_reset=v_reset, surrogate_function=surrogate_function, detach_reset=True)
             )
         else:
             self.downsample = nn.Identity()
