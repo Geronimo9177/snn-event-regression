@@ -4,6 +4,8 @@ from tqdm import tqdm
 from spikingjelly.activation_based import functional
 import matplotlib.pyplot as plt
 
+from .Network.norm import RMSNorm2d, MultiplyBy
+
 
 # ============================================================================
 # Monitoring Mode Configuration
@@ -24,6 +26,32 @@ def disable_monitoring(model, mode):
         model.disable_norm_monitoring()
 
 
+def _collect_norm_param_stats(model, norm_activity_over_time):
+    """Collect mean/std for weights and bias, plus scale for MultiplyBy, for monitored norm layers."""
+    if norm_activity_over_time is None:
+        return None
+
+    stats = {}
+
+    for name, module in model.named_modules():
+        if not isinstance(module, (torch.nn.BatchNorm2d, RMSNorm2d, MultiplyBy)):
+            continue
+
+        weight = getattr(module, "weight", None)
+        bias = getattr(module, "bias", None)
+        scale = getattr(module, "scale_value", None)
+
+        stats[name] = {
+            'weight_mean': float(weight.detach().mean().item()) if weight is not None else None,
+            'weight_std': float(weight.detach().std().item()) if weight is not None else None,
+            'bias_mean': float(bias.detach().mean().item()) if bias is not None else None,
+            'bias_std': float(bias.detach().std().item()) if bias is not None else None,
+            'scale': float(scale.detach().item()) if isinstance(scale, torch.Tensor) else (float(scale) if scale is not None else None),
+        }
+
+    return stats
+
+
 def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
     """Evaluate model on test set with comprehensive monitoring capabilities.
     
@@ -34,7 +62,7 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
         loss_fn: Loss function to use (default: MSELoss). Can be MSELoss or L1Loss
         monitor_mode: "none", "spikes", "norm", or "both" for monitoring during evaluation
     """
-    # Evaluation on test set
+    true_value_initialization = CONFIG["true_value_initialization"]
     device = torch.device(CONFIG["device"])
     
     # Set default loss function if not provided
@@ -80,17 +108,21 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
             # Reset hidden states at start of each sequence batch
             functional.reset_net(model)
             
+            if true_value_initialization:
+                model.lif_out.v = targets[0].unsqueeze(-1)  # Initialize output neuron state
+            
             test_mem_list = []
             
             # Process through entire test sequence
-            for step in range(num_steps):
+            start_step = 1 if true_value_initialization else 0
+            for step in range(start_step, num_steps):
                 
                 # Forward pass
                 mem_out = model(data[step])  # [B, 1]
                 test_mem_list.append(mem_out)
                 
                 # Initialize tracking lists on the first timestep
-                if step == 0:
+                if step == start_step:
                     if monitor_mode in ["spikes", "both"]:
                         for k in model.spike_record.keys():
                             spike_activity_over_time[k] = []
@@ -143,10 +175,13 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
             # Stack all predictions for this batch
             batch_predictions = torch.stack(test_mem_list, dim=0)  # [T, B, 1]
             batch_predictions = batch_predictions.squeeze(-1)  # [T, B]
-            
-            # Calculate metrics for this batch
-            batch_loss = loss_fn(batch_predictions, targets)
-            batch_rel_err = torch.linalg.norm(batch_predictions - targets) / torch.linalg.norm(targets)
+
+            # Align targets when using true value initialization
+            targets_aligned = targets[start_step:]  # [T, B]
+
+            # Calculate metrics for this batch over full aligned sequence
+            batch_loss = loss_fn(batch_predictions, targets_aligned)
+            batch_rel_err = torch.linalg.norm(batch_predictions - targets_aligned) / torch.linalg.norm(targets_aligned)
             
             test_loss_total += batch_loss.item()
             test_rel_err_total += batch_rel_err.item()
@@ -154,9 +189,9 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
             # Update progress bar
             pbar_test.set_postfix({'loss': f'{batch_loss.item():.6f}'})
             
-            # Store for visualization (flatten batch dimension)
+            # Store for visualization (flatten batch dimension) over full aligned sequence
             all_predictions.append(batch_predictions.detach().cpu().numpy())
-            all_targets.append(targets.detach().cpu().numpy())
+            all_targets.append(targets_aligned.detach().cpu().numpy())
         
         pbar_test.close()
         
@@ -202,7 +237,9 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
         num_timesteps = data.size(0)
         num_events_per_timestep = []
 
-        for t in range(num_timesteps):
+        # Align event counting with processed timesteps
+        start_step = 1 if true_value_initialization else 0
+        for t in range(start_step, num_timesteps):
             # Count non-zero values at this timestep (sum over batch, channels, height, width)
             events = (data[t] != 0).sum().item()
             num_events_per_timestep.append(events)
@@ -213,6 +250,12 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
         spike_activity_total = None
         num_events_per_timestep = None
     
+    # Collect static BatchNorm parameter statistics for convenience
+    if monitor_mode in ["norm", "both"]:
+        norm_param_stats = _collect_norm_param_stats(model, norm_activity_over_time)
+    else:
+        norm_param_stats = None
+
     # Return results dictionary for further analysis
     results = {
         'avg_loss': avg_test_loss,
@@ -222,148 +265,9 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
         'spike_activity': spike_activity_total,
         'num_events': num_events_per_timestep,
         'norm_stats': norm_activity_over_time,
+        'norm_params': norm_param_stats,
         'spike_stats': spike_activity_over_time,
     }
     
     return results
-
-
-# ============================================================================
-# Visualization Functions
-# ============================================================================
-
-def plot_prediction(results, window_start=0, window_end=-1):
-    """
-    Plot only model predictions vs targets.
-    
-    Args:
-        results: Dictionary returned from test() function
-        window_start: Start index for plotting window
-        window_end: End index for plotting window (default: min(2000, total length))
-    """
-    
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8))
-    
-    # Subplot 1: Model output vs target
-    ax1.plot(results['test_output'][window_start:window_end] * 180, 
-             label="Model Output", alpha=0.8, linewidth=1.5)
-    ax1.plot(results['test_target'][window_start:window_end] * 180, 
-             label="Target", alpha=0.8, linewidth=1.5)
-    ax1.set_xlabel("Frame")
-    ax1.set_ylabel("Angle (degrees)")
-    ax1.set_title("Model Output vs Target (Continuous Evaluation)")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-
-    # Subplot 2: Absolute error
-    test_error = np.abs(results['test_output'][window_start:window_end] - 
-                        results['test_target'][window_start:window_end]) * 180
-    ax2.plot(test_error, color='orange', linewidth=1)
-    ax2.set_xlabel("Frame")
-    ax2.set_ylabel("Absolute Error (degrees)")
-    ax2.set_title("Absolute Error over Time")
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
-    
-    # Print error statistics
-    print(f"\nError statistics (Full sequence):")
-    print(f"  Mean error: {np.mean(np.abs(results['test_output'] - results['test_target']) * 180):.2f}°")
-    print(f"  Std error: {np.std(np.abs(results['test_output'] - results['test_target']) * 180):.2f}°")
-    print(f"  Max error: {np.max(np.abs(results['test_output'] - results['test_target']) * 180):.2f}°")
-
-    print(f"\nError statistics (Window [{window_start}:{window_end}]):")
-    print(f"  Mean error: {np.mean(np.abs(results['test_output'][window_start:window_end] - results['test_target'][window_start:window_end]) * 180):.2f}°")
-    print(f"  Std error: {np.std(np.abs(results['test_output'][window_start:window_end] - results['test_target'][window_start:window_end]) * 180):.2f}°")
-    print(f"  Max error: {np.max(np.abs(results['test_output'][window_start:window_end] - results['test_target'][window_start:window_end]) * 180):.2f}°")
-
-
-def plot_spike_activity(results, window_start=0, window_end=-1):
-    """Plot spike activity and input events."""
-    if results['spike_activity'] is None:
-        print("No spike activity data available. Run test() with monitor_mode='spikes' or 'both'")
-        return
-    
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8))
-    
-    # Subplot 1: Average spike activity
-    ax1.plot(results['spike_activity'][window_start:window_end], 
-             color='green', linewidth=1.5)
-    ax1.set_xlabel("Frame")
-    ax1.set_ylabel("Average Spike Activity")
-    ax1.set_title("Average Spike Activity Across the Network Over Time")
-    ax1.grid(True, alpha=0.3)
-
-    # Subplot 2: Number of input events
-    ax2.plot(results['num_events'][window_start:window_end], 
-             color='purple', linewidth=1.5)
-    ax2.set_xlabel("Frame")
-    ax2.set_ylabel("Number of Events")
-    ax2.set_title("Number of Input Events per Timestep")
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
-    
-    # Print spike statistics
-    print(f"\nSpike activity statistics:")
-    print(f"  Mean activity: {np.mean(results['spike_activity']):.6f}")
-    print(f"  Std activity: {np.std(results['spike_activity']):.6f}")
-    print(f"  Max activity: {np.max(results['spike_activity']):.6f}")
-    print(f"  Min activity: {np.min(results['spike_activity']):.6f}")
-    
-    print(f"\nInput event statistics:")
-    print(f"  Mean events per timestep: {np.mean(results['num_events']):.2f}")
-    print(f"  Max events per timestep: {np.max(results['num_events']):.2f}")
-    print(f"  Min events per timestep: {np.min(results['num_events']):.2f}")
-
-
-def plot_normalization_stats(results, window_start=0, window_end=-1):
-    """Plot normalization layer statistics."""
-    if results['norm_stats'] is None:
-        print("No normalization statistics data available. Run test() with monitor_mode='norm' or 'both'")
-        return
-    
-    # Determine number of layers
-    num_layers = len(results['norm_stats'])
-    
-    fig, axes = plt.subplots(num_layers, 1, figsize=(15, 5 * num_layers))
-    
-    # Handle single layer case
-    if num_layers == 1:
-        axes = [axes]
-    
-    # Plot statistics for each layer
-    for idx, (layer_name, stats) in enumerate(results['norm_stats'].items()):
-        ax = axes[idx]
-        
-        ax.plot(stats['input_mean'][window_start:window_end], 
-                label="Input Mean", linewidth=1.5, alpha=0.8)
-        ax.plot(stats['output_mean'][window_start:window_end], 
-                label="Output Mean", linewidth=1.5, alpha=0.8)
-        ax.plot(stats['input_std'][window_start:window_end], 
-                label="Input Std", linewidth=1.5, alpha=0.8)
-        ax.plot(stats['output_std'][window_start:window_end], 
-                label="Output Std", linewidth=1.5, alpha=0.8)
-        
-        ax.set_xlabel("Frame")
-        ax.set_ylabel("Statistics Value")
-        ax.set_title(f"Normalization Statistics - {layer_name}")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_all(results, window_start=0, window_end=-1):
-    """Plot all available data (predictions, spikes, normalization)."""
-    plot_prediction(results, window_start, window_end)
-    
-    if results['spike_activity'] is not None:
-        plot_spike_activity(results, window_start, window_end)
-    
-    if results['norm_stats'] is not None:
-        plot_normalization_stats(results, window_start, window_end)
 

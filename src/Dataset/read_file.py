@@ -71,6 +71,11 @@ def _align_and_slice_events(events, timestamps, data_labels, time_window, START_
 
 def read_pendulum_file(FILE_PATH, CSV_PATH, time_window=30000, START_FRAME=0, END_FRAME=-1):
     """Read pendulum event data and encoder measurements, then align and slice them."""
+    
+    print(f"\n{'='*70}")
+    print("Starting data loading for Pendulum experiment...")
+    print(f"{'='*70}")
+    
     # Load event data and CSV measurements
     events = tonic.io.read_aedat4(FILE_PATH)
     df = pd.read_csv(CSV_PATH)
@@ -88,6 +93,11 @@ def read_pendulum_file(FILE_PATH, CSV_PATH, time_window=30000, START_FRAME=0, EN
 
 def read_IMU_file(FILE_PATH, time_window=10000, START_FRAME=0, END_FRAME=-1):
     """Read IMU event data and compute orientation (pitch/roll) using Madgwick filter."""
+    
+    print(f"\n{'='*70}")
+    print("Starting data loading for IMU experiment...")
+    print(f"{'='*70}")
+    
     # Load event data using Tonic library
     events = tonic.io.read_aedat4(FILE_PATH)
     

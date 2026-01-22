@@ -6,13 +6,18 @@ from tqdm import tqdm
 from spikingjelly.activation_based import functional
 
 
-def validate(model, val_loader, device, transient=200):
+def validate(model, val_loader, CONFIG):
     """
     Validation loop - evaluates model without gradient computation.
     
     This function is called during training to assess model performance
     on unseen validation data. Unlike training, no weight updates occur.
     """
+    
+    device = CONFIG["device"]
+    true_value_initialization = CONFIG["true_value_initialization"]
+    transient = CONFIG["transient"]
+    
     model.eval()  # Set to evaluation mode
 
     # Loss functions
@@ -40,21 +45,31 @@ def validate(model, val_loader, device, transient=200):
 
             # Reset all neuron states at the start of each sequence
             functional.reset_net(model)
+            
+            if true_value_initialization:
+                model.lif_out.v = targets[0].unsqueeze(-1)  # Initialize output neuron state
 
             val_mem_list = []
 
+            # When using true value initialization, skip first step used for init
+            start_step = 1 if true_value_initialization else 0
+
             # Process entire validation sequence
-            for step in range(num_steps):
+            for step in range(start_step, num_steps):
                 mem_out = model(data[step])  # Forward pass: [B, 1]
                 val_mem_list.append(mem_out)
 
-            # Stack all predictions: [T, B, 1] → [T, B]
+            # Stack all predictions: [T', B, 1] → [T', B]
             batch_predictions = torch.stack(val_mem_list, dim=0)
             batch_predictions = batch_predictions.squeeze(-1)
 
-            # Skip transient period (warmup)
-            batch_predictions_eff = batch_predictions[transient:]
-            targets_eff = targets[transient:]
+            # Align targets with prediction start when init is used
+            targets_aligned = targets[start_step:]
+
+            # Skip transient period (warmup), adjusted for start_step
+            t0 = max(0, transient - start_step)
+            batch_predictions_eff = batch_predictions[t0:]
+            targets_eff = targets_aligned[t0:]
 
             # Compute metrics for this batch
             batch_loss_mse = loss_function_mse(batch_predictions_eff, targets_eff)
@@ -156,9 +171,10 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         scheduler = None
 
     # Training parameters
+    K = CONFIG["K"]  # TBPTT window size
+    true_value_initialization = CONFIG["true_value_initialization"]
     transient = CONFIG["transient"]
     num_epochs = CONFIG["num_epochs"]
-    K = CONFIG["K"]  # TBPTT window size
     device = torch.device(CONFIG["device"])
     early_stop_patience = CONFIG["early_stop_patience"]
 
@@ -215,14 +231,19 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
             # Reset hidden states at start of sequence
             functional.reset_net(model)
             
+            if true_value_initialization:
+                model.lif_out.v = targets[0].unsqueeze(-1)  # Initialize output neuron state
+            
             step_trunc = 0
             K_count = 0
             mem_rec_trunc = []
             batch_loss = 0.0
             batch_chunks = 0
             
-                # Process through entire sequence with TBPTT
-            for step in range(num_steps):
+            # Process through entire sequence with TBPTT
+            # When true_value_initialization=True, start from step 1 (skip the first step used for initialization)
+            start_step = 1 if true_value_initialization else 0
+            for step in range(start_step, num_steps):
                 mem_out = model(data[step])
                 mem_rec_trunc.append(mem_out)
                 step_trunc += 1
@@ -230,8 +251,15 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
                 # Backward pass every K steps
                 if step_trunc == K:
                     mem_rec_trunc = torch.stack(mem_rec_trunc, dim=0)
-                    target_slice = targets[int(K_count * K):int((K_count + 1) * K)]
-
+                    
+                    # Adjust indices when using true_value_initialization
+                    if true_value_initialization:
+                        start_idx = int(K_count * K) + 1
+                    else:
+                        start_idx = int(K_count * K)
+                        
+                    end_idx = start_idx + K    
+                    target_slice = targets[start_idx:end_idx]
                     loss = loss_fn(mem_rec_trunc.squeeze(-1), target_slice)
 
                     # Backward and optimize
@@ -260,12 +288,19 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
                     mem_rec_trunc = []
                 
                 # Handle remaining timesteps
-                if (step == num_steps - 1) and (num_steps % K):
+                if (step == num_steps - 1) and (mem_rec_trunc):
                     mem_rec_trunc = torch.stack(mem_rec_trunc, dim=0)
-                    idx_start = K_count * K
-                    idx_end = K_count * K + num_steps % K
-                    target_slice = targets[int(idx_start):int(idx_end)]
-
+                    
+                    # Adjust indices for remaining timesteps when using true_value_initialization
+                    if true_value_initialization:
+                        remaining_len = len(mem_rec_trunc)
+                        start_idx = (K_count * K) + 1
+                        end_idx = start_idx + remaining_len
+                    else:
+                        start_idx = K_count * K
+                        end_idx = K_count * K + num_steps % K
+                        
+                    target_slice = targets[int(start_idx):int(end_idx)]
                     loss = loss_fn(mem_rec_trunc.squeeze(-1), target_slice)
 
                     optimizer.zero_grad()
@@ -301,7 +336,7 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         # ========================================================================
         # VALIDATION PHASE
         # ========================================================================
-        val_metrics = val_metrics = validate(model, valloader, device, transient)
+        val_metrics = val_metrics = validate(model, valloader, CONFIG)
         avg_val_loss_mse = val_metrics['mse']
         avg_val_loss_l1 = val_metrics['l1']
         avg_val_rel_err = val_metrics['rel_err']

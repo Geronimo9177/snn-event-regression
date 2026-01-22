@@ -21,11 +21,6 @@ from src import (
 
 def main():
 	# ============================================================================
-	# Execution mode
-	# ============================================================================
-	mode = "train"  # Options: "train" or "test"
-
-	# ============================================================================
 	# Basic configuration
 	# ============================================================================
 	SEED = 42
@@ -35,15 +30,17 @@ def main():
 	torch.cuda.manual_seed(SEED)
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ 
+ 	# ============================================================================
+	# Execution mode
+	# ============================================================================
+	mode = "test"  				# Options: "train" or "test"
+	experiment = "IMU" 	# Options: "pendulum", "IMU"
+	monitor_mode = "both"  		# Options: "none", "spikes", "norm", "both"
 
 	# ============================================================================
 	# Data parameters
 	# ============================================================================
-	experiment = "pendulum" # Options: "pendulum", "IMU"
-	
-	time_window = 30000
-	START_FRAME = 300
-	END_FRAME = -1
 
 	# Splits and sequences
 	test_ratio = 0.05
@@ -53,10 +50,10 @@ def main():
 	BATCH_SIZE = 4
 	
 	# Dataloader optimization (reduce GPU waiting time)
-	num_workers = 1
-	prefetch_factor = 1
+	num_workers = 0
+	prefetch_factor = None
 	pin_memory = False
-	persistent_workers = True
+	persistent_workers = False
 
 	# ============================================================================
 	# Model Hyperparameters
@@ -66,30 +63,25 @@ def main():
 	wandb_name = f"snn-{experiment}-regression-PC"
 
 	# Select architecture type
-	block_type = 'SEW'  # Options: 'SEW', 'plain', 'spiking'
-
-	hidden = 256     # Hidden layer size
+	block_type = 'SEW'  					# Options: 'SEW', 'plain', 'spiking'
 
 	# Neuron reset type
-	reset_type = 'hard'  # options: 'hard' or 'soft' reset for LIF neurons
+	reset_type = 'soft'  					# options: 'hard' or 'soft' reset for LIF neurons
 
-	surrogate_function = surrogate.ATan()  # Gradient surrogate (arctan)
-	Plif = False                          # Use standard LIF (not parametric)
-	tau = 2.0                             # Time constant for hidden neurons
-	final_tau = 20.0                      # Time constant for output neuron
+	surrogate_function = surrogate.ATan()  	# Gradient surrogate (arctan)
+	Plif = False                          	# Use standard LIF (not parametric)
+	tau = 2.0                             	# Time constant for hidden neurons
+	final_tau = 20.0                      	# Time constant for output neuron
 
-	norm_type = 'BN'        # Normalization type: 'BN', 'RMS', 'MUL', or None
-	learnable_norm = True   # Whether normalization parameters are learnable
-	init_scale = 5.0        # Initial scale for Multiplication layers
+	norm_type = 'BN'      			  		# Normalization type: 'BN', 'RMS', 'MUL', or None
+	learnable_norm = True   				# Whether normalization parameters are learnable
+	init_scale = 5.0        				# Initial scale for Multiplication layers
 
-	K = 10           # TBPTT truncation window (backprop every K timesteps)
-	transient = 200  # Initial timesteps to skip (warmup for recurrent states)
+	K = 10           						# TBPTT truncation window (backprop every K timesteps)
 
-	num_epochs = 20  # Total training epochs
+	num_epochs = 30  						# Total training epochs
 
-	early_stop_patience = 10  # Stop if no improvement for this many epochs
-
-	monitor_mode = "none"  # Options: "none", "spikes", "norm", "both"
+	early_stop_patience = 10  				# Stop if no improvement for this many epochs
 
 	# ============================================================================
 	# Event reading and preprocessing
@@ -99,6 +91,10 @@ def main():
 		FILE_PATH = "./data/pendulum_events.aedat4"
 		CSV_PATH  = "./data/pendulum_encoder.csv"
   
+		time_window = 30000
+		START_FRAME = 300
+		END_FRAME = -1
+  
 		events_per_frame, labels = read_pendulum_file(
 			FILE_PATH,
 			CSV_PATH,
@@ -106,14 +102,28 @@ def main():
 			START_FRAME=START_FRAME,
 			END_FRAME=END_FRAME,
 		)
+  
+		hidden = 256     						# Hidden layer size
+		true_value_initialization = False  		# Initialize output neuron with true values
+		transient = 200  						# Initial timesteps to skip (warmup for recurrent states)
+  
 	elif experiment.lower() == 'imu':
 		FILE_PATH = "./data/imu_events.aedat4"
+  
+		time_window = 10000
+		START_FRAME = 0
+		END_FRAME = -2500
+  
 		events_per_frame, labels = read_IMU_file(
 			FILE_PATH,
 			time_window=time_window,
 			START_FRAME=START_FRAME,
 			END_FRAME=END_FRAME,
 		)
+  
+		hidden = 512     	# Hidden layer size
+		true_value_initialization = True  		# Initialize output neuron with true values
+		transient = 0  							# Initial timesteps to skip (warmup for recurrent states)
 	else:
 		raise ValueError("Unsupported experiment type. Choose 'pendulum' or 'IMU'.")
 	# ============================================================================
@@ -164,10 +174,11 @@ def main():
 	CONFIG = {
 		# Experiment
 		"experiment": experiment,
+		"time_window": time_window,
 		# Model architecture
 		"block_type": block_type,
-		"model_name": model.__class__.__name__,
 		"hidden": hidden,
+  		"reset_type": reset_type,
 		"tau": tau,
 		"final_tau": final_tau,
 		"surrogate_function": surrogate_function.__class__.__name__,
@@ -177,7 +188,8 @@ def main():
 		"init_scale": init_scale,
 
 		# TBPTT parameters
-		"K": K,                     
+		"K": K,
+		"true_value_initialization": true_value_initialization,
 		"transient": transient,        
 		"batch_size": BATCH_SIZE,        
 		"sequence_length": SEQ_LENGTH,  
