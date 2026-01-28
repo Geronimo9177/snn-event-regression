@@ -5,6 +5,7 @@ from spikingjelly.activation_based import functional
 import matplotlib.pyplot as plt
 
 from .Network.norm import RMSNorm2d, MultiplyBy
+from .utils import normalize_targets
 
 
 # ============================================================================
@@ -64,6 +65,7 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
     """
     true_value_initialization = CONFIG["true_value_initialization"]
     device = torch.device(CONFIG["device"])
+    experiment_type = CONFIG["experiment"]  # Get experiment type
     
     # Set default loss function if not provided
     if loss_fn is None:
@@ -100,8 +102,8 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
             data = data.to(device)           # [T, B, C, H, W]
             targets = targets.to(device)     # [T, B]
             
-            # Normalize targets
-            targets = targets / np.pi
+            # Normalize targets based on experiment type
+            targets = normalize_targets(targets, experiment_type)
             
             num_steps = data.size(0)  # T
             

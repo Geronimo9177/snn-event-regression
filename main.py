@@ -34,11 +34,11 @@ def main():
  	# ============================================================================
 	# Execution mode
 	# ============================================================================
-	mode = "test"  				# Options: "train" or "test"
-	experiment = "IMU" 	# Options: "pendulum", "IMU"
+	train_model = True  		# Set to True to train, False to skip training
+	experiment = "IMU" 			# Options: "pendulum", "IMU"
 	monitor_mode = "both"  		# Options: "none", "spikes", "norm", "both"
 
-	# ============================================================================
+	# ============================================================================ 
 	# Data parameters
 	# ============================================================================
 
@@ -108,7 +108,7 @@ def main():
 		transient = 200  						# Initial timesteps to skip (warmup for recurrent states)
   
 	elif experiment.lower() == 'imu':
-		FILE_PATH = "./data/imu_events.aedat4"
+		FILE_PATH = "./data/imu_events_large.aedat4"
   
 		time_window = 10000
 		START_FRAME = 0
@@ -217,32 +217,29 @@ def main():
 	output_dir = Path(f"./models/model_{CONFIG['block_type']}_{CONFIG['norm_type']}/checkpoints_{CONFIG['experiment']}")
 
 	# ============================================================================
-	# Training or Testing
+	# Training
 	# ============================================================================
-	if mode.lower() == "train":
+	if train_model:
 		print("\n" + "="*70)
 		print("TRAINING MODE")
 		print("="*70)
 		output_dir.mkdir(parents=True, exist_ok=True)
 		train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MSELoss(), use_wandb=use_wandb, project_name=wandb_name)
-
 		print(f"\nModel trained successfully.")
 
-	elif mode.lower() == "test":
-		print("\n" + "="*70)
-		print("TEST MODE")
-		print("="*70)
-		model_checkpoint_path = output_dir / "best_model_weights.pth"
-		# Load pre-trained weights
-		if not model_checkpoint_path.exists():
-			raise FileNotFoundError(f"Model weights not found: {model_checkpoint_path}")
-		
-		print(f"Loading model weights from: {model_checkpoint_path}")
-		model.load_state_dict(torch.load(str(model_checkpoint_path), map_location=device, weights_only=True))
-		print("Model weights loaded successfully.\n")
-
-	else:
-		raise ValueError(f"Invalid mode: {mode}. Choose 'train' or 'test'.")
+	# ============================================================================
+	# Load best model weights
+	# ============================================================================
+	print("\n" + "="*70)
+	print("LOADING BEST MODEL WEIGHTS")
+	print("="*70)
+	model_checkpoint_path = output_dir / "best_model_weights.pth"
+	if not model_checkpoint_path.exists():
+		raise FileNotFoundError(f"Model weights not found: {model_checkpoint_path}")
+	
+	print(f"Loading model weights from: {model_checkpoint_path}")
+	model.load_state_dict(torch.load(str(model_checkpoint_path), map_location=device, weights_only=True))
+	print("Model weights loaded successfully.\n")
 
 	# ============================================================================
 	# Test
@@ -253,7 +250,7 @@ def main():
 	# visualization
 	# ============================================================================
 
-	plot_all(results, window_start=0, window_end=-1)
+	plot_all(results, window_start=0, window_end=-1, experiment_type=experiment)
 
 	if use_wandb:
 		import wandb

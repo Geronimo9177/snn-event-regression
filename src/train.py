@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from spikingjelly.activation_based import functional
 
+from .utils import normalize_targets
 
 def validate(model, val_loader, CONFIG):
     """
@@ -17,6 +18,7 @@ def validate(model, val_loader, CONFIG):
     device = CONFIG["device"]
     true_value_initialization = CONFIG["true_value_initialization"]
     transient = CONFIG["transient"]
+    experiment_type = CONFIG["experiment"]  # Get experiment type
     
     model.eval()  # Set to evaluation mode
 
@@ -38,8 +40,8 @@ def validate(model, val_loader, CONFIG):
             data = data.to(device)        # [T, B, C, H, W]
             targets = targets.to(device)  # [T, B]
 
-            # Normalize targets to [-1, 1] range 
-            targets = targets / np.pi
+            # Normalize targets to [-1, 1] range based on experiment type
+            targets = normalize_targets(targets, experiment_type)
 
             num_steps = data.size(0)  # T (sequence length)
 
@@ -177,6 +179,7 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
     num_epochs = CONFIG["num_epochs"]
     device = torch.device(CONFIG["device"])
     early_stop_patience = CONFIG["early_stop_patience"]
+    experiment_type = CONFIG["experiment"]  # Get experiment type
 
     print(f"\n{'='*70}")
     print("Starting TBPTT training")
@@ -224,7 +227,8 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         
         for batch_idx, (data, targets) in enumerate(pbar_train):
             data = data.to(device)
-            targets = targets.to(device) / np.pi  # Normalize
+            targets = targets.to(device)
+            targets = normalize_targets(targets, experiment_type)  # Normalize based on experiment
             
             num_steps = data.size(0)
             
@@ -336,7 +340,7 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         # ========================================================================
         # VALIDATION PHASE
         # ========================================================================
-        val_metrics = val_metrics = validate(model, valloader, CONFIG)
+        val_metrics = validate(model, valloader, CONFIG)
         avg_val_loss_mse = val_metrics['mse']
         avg_val_loss_l1 = val_metrics['l1']
         avg_val_rel_err = val_metrics['rel_err']
