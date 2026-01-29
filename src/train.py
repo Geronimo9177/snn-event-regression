@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from spikingjelly.activation_based import functional
+import matplotlib.pyplot as plt
 
 from .utils import normalize_targets
 
@@ -31,6 +32,9 @@ def validate(model, val_loader, CONFIG):
     val_loss_l1_total = 0.0
     val_rel_err_total = 0.0
     iter_count = 0
+    
+    # Store validation data for later plotting
+    validation_samples = []
 
     with torch.no_grad():  # Disable gradient computation
         pbar_val = tqdm(iter(val_loader), desc="  Validation", leave=False)
@@ -88,6 +92,22 @@ def validate(model, val_loader, CONFIG):
                 'l1': f'{batch_loss_l1.item():.6f}'
             })
 
+            # Store first batch data for plotting
+            if iter_count == 1:  # Only store the first batch to avoid memory issues
+                batch_predictions_np = batch_predictions.detach().cpu().numpy()
+                targets_eff_np = targets_eff.detach().cpu().numpy()
+                
+                # Denormalize
+                val_predictions_denorm = -batch_predictions_np[:, 0] * 180
+                val_targets_denorm = -targets_eff_np[:, 0] * 180
+                
+                validation_samples.append({
+                    'predictions': val_predictions_denorm,
+                    'targets': val_targets_denorm,
+                    'mse': batch_loss_mse.item(),
+                    'l1': batch_loss_l1.item()
+                })
+
         pbar_val.close()
 
     # Compute average metrics across all validation batches
@@ -98,7 +118,8 @@ def validate(model, val_loader, CONFIG):
     return {
         'mse': avg_val_loss_mse,
         'l1': avg_val_loss_l1,
-        'rel_err': avg_val_rel_err
+        'rel_err': avg_val_rel_err,
+        'samples': validation_samples
     }
 
 
@@ -198,7 +219,8 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         'val_loss_l1': [],
         'val_rel_err': [],
         'learning_rate': [],
-        'best_epoch': 0
+        'best_epoch': 0,
+        'validation_samples': []  # Store validation samples for final plot
     }
 
     # Best model tracking
@@ -345,6 +367,13 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
         avg_val_loss_l1 = val_metrics['l1']
         avg_val_rel_err = val_metrics['rel_err']
         
+        # Store validation samples for final plotting
+        if val_metrics['samples']:
+            history['validation_samples'].append({
+                'epoch': epoch + 1,
+                'data': val_metrics['samples'][0]  # Store first batch of each epoch
+            })
+        
         # ========================================================================
         # UPDATE HISTORY
         # ========================================================================
@@ -451,9 +480,47 @@ def train(model, trainloader, valloader, CONFIG, output_dir, loss_fn=torch.nn.MS
     print(f"  Checkpoints saved in: {output_dir}")
     print(f"{'='*70}\n")
 
-    # Save final history
+    # ============================================================================
+    # GENERATE VALIDATION EVOLUTION PLOT
+    # ============================================================================
+    if history['validation_samples']:
+        num_epochs_plot = len(history['validation_samples'])
+        cols = 3
+        rows = 10
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(15, 25))
+        axes = axes.flatten()
+        
+        for idx, sample_data in enumerate(history['validation_samples']):
+            ax = axes[idx]
+            epoch_num = sample_data['epoch']
+            data = sample_data['data']
+            
+            ax.plot(data['targets'], label='Target', alpha=0.7, linewidth=1.5)
+            ax.plot(data['predictions'], label='Prediction', alpha=0.7, linewidth=1.5)
+            ax.set_xlabel('Timestep', fontsize=8)
+            ax.set_ylabel('Angle (degrees)', fontsize=8)
+            ax.legend(fontsize=7)
+            ax.set_title(f"Epoch {epoch_num}\nMSE: {data['mse']:.4f}", fontsize=8)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=7)
+        
+        # Hide unused subplots
+        for idx in range(num_epochs_plot, len(axes)):
+            axes[idx].axis('off')
+        
+        plt.suptitle('Validation Evolution Over Epochs', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        
+        plot_path = output_dir / "validation_evolution.png"
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Validation evolution plot saved: {plot_path}\n")
+
+    # Save final history (without validation_samples to avoid numpy serialization issues)
+    history_to_save = {k: v for k, v in history.items() if k != 'validation_samples'}
     with open(output_dir / "training_history.json", "w") as f:
-        json.dump(history, f, indent=4)
+        json.dump(history_to_save, f, indent=4)
 
     if use_wandb:
         # Save history as artifact

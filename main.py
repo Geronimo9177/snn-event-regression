@@ -108,7 +108,7 @@ def main():
 		transient = 200  						# Initial timesteps to skip (warmup for recurrent states)
   
 	elif experiment.lower() == 'imu':
-		FILE_PATH = "./data/imu_events_large.aedat4"
+		FILE_PATH = "./data/imu_events.aedat4"
   
 		time_window = 10000
 		START_FRAME = 0
