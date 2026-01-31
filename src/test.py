@@ -27,30 +27,55 @@ def disable_monitoring(model, mode):
         model.disable_norm_monitoring()
 
 
-def _collect_norm_param_stats(model, norm_activity_over_time):
-    """Collect mean/std for weights and bias, plus scale for MultiplyBy, for monitored norm layers."""
-    if norm_activity_over_time is None:
-        return None
-
-    stats = {}
-
-    for name, module in model.named_modules():
-        if not isinstance(module, (torch.nn.BatchNorm2d, RMSNorm2d, MultiplyBy)):
-            continue
-
-        weight = getattr(module, "weight", None)
-        bias = getattr(module, "bias", None)
-        scale = getattr(module, "scale_value", None)
-
-        stats[name] = {
-            'weight_mean': float(weight.detach().mean().item()) if weight is not None else None,
-            'weight_std': float(weight.detach().std().item()) if weight is not None else None,
-            'bias_mean': float(bias.detach().mean().item()) if bias is not None else None,
-            'bias_std': float(bias.detach().std().item()) if bias is not None else None,
-            'scale': float(scale.detach().item()) if isinstance(scale, torch.Tensor) else (float(scale) if scale is not None else None),
-        }
-
-    return stats
+def print_norm_layer_stats(model):
+    """Print mean weight/bias statistics for normalization layers before testing."""
+    import torch.nn as nn
+    
+    print(f"\n{'='*50}")
+    print("Normalization Layer Statistics")
+    print(f"{'='*50}")
+    
+    weight_means = []  # Mean weight per layer
+    bias_means = []    # Mean bias per layer (if present)
+    
+    for layer in model.modules():
+        # Check if the layer is BatchNorm2d, RMSNorm2d, or MultiplyBy
+        is_norm_layer = isinstance(layer, (nn.BatchNorm2d, RMSNorm2d, MultiplyBy))
+        
+        if is_norm_layer:
+            layer_name = layer.__class__.__name__
+            line_parts = [f"Layer: {layer_name}"]
+            
+            if hasattr(layer, 'weight') and layer.weight is not None:
+                if hasattr(layer.weight, 'data'):  # Learnable (tensor)
+                    weight_mean = layer.weight.data.mean().item()
+                else:  # Fixed (float)
+                    weight_mean = float(layer.weight)
+                
+                weight_means.append(weight_mean)
+                line_parts.append(f"Weight mean: {weight_mean:.4f}")
+                
+                # Bias exists only in BatchNorm2d
+                if hasattr(layer, 'bias') and layer.bias is not None:
+                    bias_mean = layer.bias.data.mean().item()
+                    bias_means.append(bias_mean)
+                    line_parts.append(f"Bias mean: {bias_mean:.4f}")
+            
+            print(" | ".join(line_parts))
+    
+    # Compute overall network statistics
+    if weight_means:
+        network_weight_mean = np.mean(weight_means)
+        network_weight_std = np.std(weight_means)
+        print(f"{'='*50}")
+        print(f"Network weight mean: {network_weight_mean:.4f}, std: {network_weight_std:.4f}")
+        
+    if bias_means:
+        network_bias_mean = np.mean(bias_means)
+        network_bias_std = np.std(bias_means)
+        print(f"Network bias mean: {network_bias_mean:.4f}, std: {network_bias_std:.4f}")
+    
+    print(f"{'='*50}\n")
 
 
 def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
@@ -73,6 +98,9 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
     
     # Determine loss type for reporting
     loss_type = "MSE" if isinstance(loss_fn, torch.nn.MSELoss) else "L1"
+    
+    # Print normalization layer statistics before testing
+    print_norm_layer_stats(model)
     
     # Initialize monitoring structures based on mode
     spike_activity_over_time = {} if monitor_mode in ["spikes", "both"] else None
@@ -251,12 +279,6 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
     else:
         spike_activity_total = None
         num_events_per_timestep = None
-    
-    # Collect static BatchNorm parameter statistics for convenience
-    if monitor_mode in ["norm", "both"]:
-        norm_param_stats = _collect_norm_param_stats(model, norm_activity_over_time)
-    else:
-        norm_param_stats = None
 
     # Return results dictionary for further analysis
     results = {
@@ -267,7 +289,6 @@ def test(model, testloader, CONFIG, monitor_mode="both", loss_fn=None):
         'spike_activity': spike_activity_total,
         'num_events': num_events_per_timestep,
         'norm_stats': norm_activity_over_time,
-        'norm_params': norm_param_stats,
         'spike_stats': spike_activity_over_time,
     }
     

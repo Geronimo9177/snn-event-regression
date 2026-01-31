@@ -54,18 +54,18 @@ class MultiplyBy(nn.Module):
     
     From: https://github.com/urancon/StereoSpike/blob/main/network/blocks.py
     """
-    def __init__(self, scale_value: float = 5., learnable: bool = True) -> None:
+    def __init__(self, weight: float = 5., learnable: bool = True) -> None:
         super(MultiplyBy, self).__init__()
 
         if learnable:
             # Learnable parameter
-            self.scale_value = Parameter(Tensor([scale_value]))
+            self.weight = Parameter(Tensor([weight]))
         else:
             # Fixed value
-            self.scale_value = scale_value
+            self.weight = weight
 
     def forward(self, input: Tensor) -> Tensor:
-        return torch.mul(input, self.scale_value)
+        return torch.mul(input, self.weight)
 
 
 # ============================================================================

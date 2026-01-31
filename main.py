@@ -35,8 +35,8 @@ def main():
 	# Execution mode
 	# ============================================================================
 	train_model = True  		# Set to True to train, False to skip training
-	experiment = "IMU" 			# Options: "pendulum", "IMU"
-	monitor_mode = "both"  		# Options: "none", "spikes", "norm", "both"
+	experiment = "Pendulum" 	# Options: "pendulum", "IMU"
+	monitor_mode = "norm"  		# Options: "none", "spikes", "norm", "both"
 
 	# ============================================================================ 
 	# Data parameters
@@ -63,8 +63,8 @@ def main():
 	wandb_name = f"snn-{experiment}-regression-PC"
 
 	# Select architecture type
-	block_type = 'SEW'  					# Options: 'SEW', 'plain', 'spiking'
-
+	block_type = 'SEW'  				# Options: 'SEW', 'plain', 'spiking'
+	
 	# Neuron reset type
 	reset_type = 'soft'  					# options: 'hard' or 'soft' reset for LIF neurons
 
@@ -200,10 +200,14 @@ def main():
 		"momentum": 0.9,
 		"weight_decay": 0.0,
 
+		# "optimizer": "Adam",
+		# "learning_rate": 1e-4,
+		# "weight_decay": 0.0,
+
 		# Learning rate scheduler
 		"scheduler": "ReduceLROnPlateau",
 		"scheduler_factor": 0.5,         
-		"scheduler_patience": 1,         
+		"scheduler_patience": 1,          
 		"min_lr": 1e-6,                  
 
 		# Training loop
@@ -214,7 +218,7 @@ def main():
 		"early_stop_patience": early_stop_patience,
 	}
  
-	output_dir = Path(f"./models/model_{CONFIG['block_type']}_{CONFIG['norm_type']}/checkpoints_{CONFIG['experiment']}")
+	output_dir = Path(f"./models/model_{CONFIG['block_type']}_{CONFIG['norm_type']}_SGD/checkpoints_{CONFIG['experiment']}")
 
 	# ============================================================================
 	# Training
@@ -250,7 +254,7 @@ def main():
 	# visualization
 	# ============================================================================
 
-	plot_all(results, window_start=0, window_end=-1, experiment_type=experiment)
+	plot_all(results, window_start=200, window_end=-1, experiment_type=experiment)
 
 	if use_wandb:
 		import wandb

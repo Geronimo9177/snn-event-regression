@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 
 def normalize_targets(targets, experiment_type):
     """
-    Normalize targets to [-1, 1] range based on experiment type.
+    Normalize targets to [0, 1] range based on experiment type.
     """
     if experiment_type.lower() == "pendulum":
-        return targets / np.pi
+        return (targets + np.pi)/(2*np.pi)
     elif experiment_type.lower() == "imu":
         return -targets / np.pi
     else:
@@ -20,17 +20,14 @@ def denormalize_targets(normalized_targets, experiment_type):
     Convert normalized targets back to degrees for visualization.
     """
     if experiment_type.lower() == "pendulum":
-        # Pendulum: [-1, 1] normalized -> [-pi, pi] radians -> [-180, 180] degrees
-        return normalized_targets * 180
+        # Pendulum: [0, 1] normalized -> [-180, 180] degrees
+        return (normalized_targets * 360) - 180
     elif experiment_type.lower() == "imu":
         # IMU: [0, 1] normalized -> [0, -pi] radians -> [0, -180] degrees
-        # Inverse of: -targets / pi
-        # So: radians = -normalized * pi, then convert to degrees
-        radians = -normalized_targets * np.pi
-        return radians * 180 / np.pi
+        return -normalized_targets * 180
     else:
         # Default to pendulum behavior
-        return normalized_targets * 180
+        return (normalized_targets * 360) - 180
 
 
 def visualize_sequence_from_trainloader(trainloader, n_sequences=5, playback_fps=10, scale=1):
@@ -154,14 +151,14 @@ def plot_prediction(results, window_start=0, window_end=-1, experiment_type="pen
     target_full = denormalize_targets(results['test_target'], experiment_type)
     
     print(f"\nError statistics (Full sequence):")
-    print(f"  Mean error: {np.mean(np.abs(output_full - target_full)):.2f}°")
-    print(f"  Std error: {np.std(np.abs(output_full - target_full)):.2f}°")
-    print(f"  Max error: {np.max(np.abs(output_full - target_full)):.2f}°")
+    print(f"  Mean error: {np.mean(np.abs(output_full - target_full)):.3f}°")
+    print(f"  Std error: {np.std(np.abs(output_full - target_full)):.3f}°")
+    print(f"  Max error: {np.max(np.abs(output_full - target_full)):.3f}°")
 
     print(f"\nError statistics (Window [{window_start}:{window_end}]):")
-    print(f"  Mean error: {np.mean(np.abs(output_degrees - target_degrees)):.2f}°")
-    print(f"  Std error: {np.std(np.abs(output_degrees - target_degrees)):.2f}°")
-    print(f"  Max error: {np.max(np.abs(output_degrees - target_degrees)):.2f}°")
+    print(f"  Mean error: {np.mean(np.abs(output_degrees - target_degrees)):.3f}°")
+    print(f"  Std error: {np.std(np.abs(output_degrees - target_degrees)):.3f}°")
+    print(f"  Max error: {np.max(np.abs(output_degrees - target_degrees)):.3f}°")
 
 
 def plot_spike_activity(results, window_start=0, window_end=-1):
@@ -211,7 +208,7 @@ def plot_normalization_stats(results, window_start=0, window_end=-1):
         return
 
     layer_names, mean_amplifications = compute_mean_amplification_per_layer(
-        results['norm_stats'], results.get('norm_params'), window_start, window_end
+        results['norm_stats'], window_start, window_end
     )
 
     if len(layer_names) == 0:
@@ -221,69 +218,11 @@ def plot_normalization_stats(results, window_start=0, window_end=-1):
     fig = plot_network_amplification(layer_names, mean_amplifications)
     plt.show()
 
-    # Print normalization parameter statistics if available
-    norm_params = results.get('norm_params')
-    if norm_params:
-        print("\nNormalization parameter statistics (mean +/- std):")
-        names_to_print = list(dict.fromkeys(layer_names + [n for n in norm_params.keys() if n not in layer_names]))
 
-        agg_weight_means = []
-        agg_weight_stds = []
-        agg_bias_means = []
-        agg_bias_stds = []
-        agg_scales = []
-
-        for layer_name in names_to_print:
-            layer_stats = norm_params.get(layer_name, {})
-            w_mean = layer_stats.get('weight_mean')
-            w_std = layer_stats.get('weight_std')
-            b_mean = layer_stats.get('bias_mean')
-            b_std = layer_stats.get('bias_std')
-            scale = layer_stats.get('scale')
-
-            parts = []
-            if w_mean is not None and w_std is not None:
-                parts.append(f"W {w_mean:.4f} +/- {w_std:.4f}")
-                agg_weight_means.append(w_mean)
-                agg_weight_stds.append(w_std)
-            if b_mean is not None and b_std is not None:
-                parts.append(f"b {b_mean:.4f} +/- {b_std:.4f}")
-                agg_bias_means.append(b_mean)
-                agg_bias_stds.append(b_std)
-            if scale is not None:
-                parts.append(f"scale {scale:.4f}")
-                agg_scales.append(scale)
-
-            if parts:
-                print(f"  {layer_name}: " + ", ".join(parts))
-
-        # Network-level averages across layers (ignore missing entries)
-        def _safe_mean(values):
-            return float(np.mean(values)) if len(values) > 0 else None
-
-        net_w_mean = _safe_mean(agg_weight_means)
-        net_w_std = _safe_mean(agg_weight_stds)
-        net_b_mean = _safe_mean(agg_bias_means)
-        net_b_std = _safe_mean(agg_bias_stds)
-        net_scale = _safe_mean(agg_scales)
-
-        summary_parts = []
-        if net_w_mean is not None and net_w_std is not None:
-            summary_parts.append(f"W mean {net_w_mean:.4f}, W std {net_w_std:.4f}")
-        if net_b_mean is not None and net_b_std is not None:
-            summary_parts.append(f"b mean {net_b_mean:.4f}, b std {net_b_std:.4f}")
-        if net_scale is not None:
-            summary_parts.append(f"scale mean {net_scale:.4f}")
-
-        if summary_parts:
-            print("  Network averages: " + " | ".join(summary_parts))
-
-
-def compute_mean_amplification_per_layer(norm_activity_over_time, norm_params=None, window_start=0, window_end=-1):
+def compute_mean_amplification_per_layer(norm_activity_over_time, window_start=0, window_end=-1):
     """Compute average amplification factor (std_out / std_in) over time for each layer.
     
     For BatchNorm/RMSNorm: computes std_out / std_in from activity stats.
-    For MultiplyBy (learnable): uses scale_value directly as amplification factor.
     """
     layer_names = []
     mean_amplifications = []
@@ -302,15 +241,6 @@ def compute_mean_amplification_per_layer(norm_activity_over_time, norm_params=No
 
             layer_names.append(layer_name)
             mean_amplifications.append(mean_scaling)
-    
-    # Add MultiplyBy layers using their scale_value if learnable
-    if norm_params:
-        for layer_name, params in norm_params.items():
-            scale = params.get('scale')
-            # Only add if it has a scale and wasn't already added from activity stats
-            if scale is not None and layer_name not in layer_names:
-                layer_names.append(layer_name)
-                mean_amplifications.append(scale)
 
     return layer_names, np.array(mean_amplifications)
 
